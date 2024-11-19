@@ -14,22 +14,30 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.paruyr.fluencytask.ECC
+import com.paruyr.fluencytask.ElGamel
+import com.paruyr.fluencytask.SecretShare
+import com.paruyr.fluencytask.FinitePrimeField
+import com.paruyr.fluencytask.Point
+import com.paruyr.fluencytask.PrimeCurve
 import com.paruyr.fluencytask.data.BluetoothRepository
 import com.paruyr.fluencytask.domain.model.FluencyMessage
 import com.paruyr.fluencytask.domain.usecase.SendMessageUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.math.BigInteger
+import java.security.SecureRandom
+import java.util.Calendar
+
 
 class BluetoothViewModel(
     application: Application,
     private val sendMessageUseCase: SendMessageUseCase,
     private val bluetoothRepository: BluetoothRepository,
 ) : AndroidViewModel(application) {
-
     private val _messages = mutableStateListOf<FluencyMessage>()
     val messages: List<FluencyMessage> get() = _messages
-
     private val _needsPermissions = MutableStateFlow(false)
     val needsPermissions: StateFlow<Boolean> = _needsPermissions
 

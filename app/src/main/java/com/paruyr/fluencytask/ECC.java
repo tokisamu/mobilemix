@@ -1,4 +1,7 @@
+package com.paruyr.fluencytask;
+
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.Random;
 
 public class ECC {
@@ -25,26 +28,99 @@ public class ECC {
         return x;
     }
 
-// Cifratura del messaggio m sulla curva prima P
-// Con l'uso del punto base B e la chiave pubblica Pd
-public static Point[] ElGamalEnc(PrimeCurve P, BigInteger m, Point B, Point Pd) {
-    Point pm = ECC.KoblitzEnc(P, m);
-    BigInteger r = ECC.randomBigInteger();
-    Point V = P.mul(B, r);
-    Point rPd = P.mul(Pd, r);
-    Point W = P.sum(pm, rPd);
-    return new Point[]{V, W};
-}
 
-// Decodifica del messaggio (V, W) sulla curva prima P
-public static BigInteger ElGamalDec(PrimeCurve P, Point B, Point[] VW, BigInteger nD) {
-    Point V = VW[0];
-    Point W = VW[1];
-    Point nDV = P.mul(V, nD);
-    Point Pm = P.sub(W, nDV);
-    BigInteger m = ECC.KoblitzDec(P, Pm);
-    return m;
-}
+    public static Point[] ElGamalEnc(PrimeCurve P, BigInteger m, Point B, Point Pd) {
+        Point pm = ECC.KoblitzEnc(P, m);
+        BigInteger r = ECC.randomBigInteger();
+        Point V = P.mul(B, r);
+        Point rPd = P.mul(Pd, r);
+        Point W = P.sum(pm, rPd);
+        return new Point[]{V, W};
+    }
+
+    // Decodifica del messaggio (V, W) sulla curva prima P
+    public static BigInteger ElGamalDec(PrimeCurve P, Point B, Point[] VW, BigInteger nD) {
+        Point V = VW[0];
+        Point W = VW[1];
+        Point nDV = P.mul(V, nD);
+        Point Pm = P.sub(W, nDV);
+        BigInteger m = ECC.KoblitzDec(P, Pm);
+        return m;
+    }
+
+    public static BigInteger ElGamalTwoDec(PrimeCurve P, Point B, Point[] VW, BigInteger nD1,BigInteger nD2) {
+        Point V = VW[0];
+        Point W = VW[1];
+        Point nDV = P.mul(V, nD1);
+        Point Pm = P.sub(W, nDV);
+        Point nDV2 = P.mul(V, nD2);
+        Pm = P.sub(Pm, nDV2);
+        BigInteger m = ECC.KoblitzDec(P, Pm);
+        return m;
+    }
+
+    public static Point[] ElPartDec(PrimeCurve P, Point B, Point[] VW, BigInteger nD) {
+        Point V = VW[0];
+        Point W = VW[1];
+        Point nDV = P.mul(V, nD);
+        Point Pm = P.sub(W, nDV);
+        BigInteger m = ECC.KoblitzDec(P, Pm);
+        return new Point[]{V, Pm};
+    }
+    //test pass
+    public static ArrayList<Point[]> ElGamalShuffle(PrimeCurve P, Point B, ArrayList<Point[]> VWs, Point Pd)
+    {
+        for (Point[] VW:VWs)
+        {
+            Point V = VW[0];
+            Point W = VW[1];
+            BigInteger r = ECC.randomBigInteger();
+            V = P.sum(P.mul(B, r),V);
+            Point rPd = P.mul(Pd, r);
+            W = P.sum(W, rPd);
+            VW[0] = V;
+            VW[1] = W;
+        }
+        return VWs;
+    }
+
+    //test pass
+    public static ArrayList<Point[]> ElGamalInitReencrypt(PrimeCurve P, Point B, ArrayList<Point[]> VWs)
+    {
+        int i = 0;
+        for (Point[] VW:VWs)
+        {
+            Point newarr[] = new Point[3];
+            newarr[0] = P.sub(B,B);
+            newarr[1] = VW[1];
+            newarr[2] = VW[0];
+            VWs.set(i, newarr);
+            i++;
+        }
+        return VWs;
+    }
+    //to be done
+    public static ArrayList<Point[]> ElGamalReencrypt(PrimeCurve P, Point B, ArrayList<Point[]> VWs, Point Pd,BigInteger nD)
+    {
+        for (Point[] VW:VWs)
+        {
+            Point V = VW[0];
+            Point W = VW[1];
+            Point oldV = VW[2];
+            BigInteger r = ECC.randomBigInteger();
+            V = P.sum(P.mul(B, r),V);
+            Point rPd = P.mul(Pd, r);
+            W = P.sum(W, rPd);
+
+            Point nDV = P.mul(oldV, nD);
+            Point Pm = P.sub(W, nDV);
+            BigInteger m = ECC.KoblitzDec(P, Pm);
+            VW[0] = V;
+            VW[1] = Pm;
+            VW[2] = oldV;
+        }
+        return VWs;
+    }
 
     // Prima fase dell'algoritmo ECDH, genera chiave privata nX e e chiave pubblica Px
     public static ECDHKey ECDHPhase1(PrimeCurve P, Point B, BigInteger n) {
@@ -107,5 +183,91 @@ public static BigInteger ElGamalDec(PrimeCurve P, Point B, Point[] VW, BigIntege
             ret = new BigInteger(bitLength, rnd);
         } while (ret.compareTo(n) > 0);
         return ret;
+    }
+
+    public static SecretShare[] split(BigInteger secret, int needed, int available, BigInteger prime, Random random)
+    {
+        BigInteger[] coeff = new BigInteger[needed];
+        coeff[0] = secret;
+        for (int i = 1; i < needed; i++)
+        {
+            BigInteger r;
+            while (true)
+            {
+                r = new BigInteger(prime.bitLength(), random);
+                if (r.compareTo(BigInteger.ZERO) > 0 && r.compareTo(prime) < 0)
+                {
+                    break;
+                }
+            }
+            coeff[i] = r;
+        }
+
+        SecretShare[] shares = new SecretShare[available];
+        for (int x = 1; x <= available; x++)
+        {
+            BigInteger accum = secret;
+
+            for (int exp = 1; exp < needed; exp++)
+            {
+                accum = accum.add(coeff[exp].multiply(BigInteger.valueOf(x).pow(exp).mod(prime))).mod(prime);
+            }
+            shares[x - 1] = new SecretShare(x, accum);
+            //System.out.println("Share " + shares[x - 1]);
+        }
+        return shares;
+    }
+
+    public static BigInteger combine(SecretShare[] shares,BigInteger prime)
+    {
+        BigInteger accum = BigInteger.ZERO;
+
+        for(int formula = 0; formula < shares.length; formula++)
+        {
+            BigInteger numerator = BigInteger.ONE;
+            BigInteger denominator = BigInteger.ONE;
+
+            for(int count = 0; count < shares.length; count++)
+            {
+                if(formula == count)
+                    continue; // If not the same value
+
+                int startposition = shares[formula].getNumber();
+                int nextposition = shares[count].getNumber();
+
+                numerator = numerator.multiply(BigInteger.valueOf(nextposition).negate()).mod(prime); // (numerator * -nextposition) % prime;
+                denominator = denominator.multiply(BigInteger.valueOf(startposition - nextposition)).mod(prime); // (denominator * (startposition - nextposition)) % prime;
+            }
+            BigInteger value = shares[formula].getShare();
+            BigInteger tmp = value.multiply(numerator).multiply(denominator.modInverse(prime));
+            accum = prime.add(accum).add(tmp).mod(prime); //  (prime + accum + (value * numerator * modInverse(denominator))) % prime;
+        }
+
+        //System.out.println("The secret is: " + accum + "\n");
+
+        return accum;
+    }
+    public static BigInteger getPartpri(SecretShare share,BigInteger prime,int index,int len)
+    {
+        BigInteger accum = BigInteger.ZERO;
+        int formula = index;
+        BigInteger numerator = BigInteger.ONE;
+        BigInteger denominator = BigInteger.ONE;
+        for(int count = 0; count < len; count++)
+        {
+            if(formula == count)
+                continue; // If not the same value
+
+            int startposition = index+1;
+            int nextposition = count+1;
+
+            numerator = numerator.multiply(BigInteger.valueOf(nextposition).negate()).mod(prime); // (numerator * -nextposition) % prime;
+            denominator = denominator.multiply(BigInteger.valueOf(startposition - nextposition)).mod(prime); // (denominator * (startposition - nextposition)) % prime;
+        }
+        BigInteger value = share.getShare();
+        BigInteger tmp = value.multiply(numerator).multiply(denominator.modInverse(prime));
+        accum = prime.add(accum).add(tmp).mod(prime); //  (prime + accum + (value * numerator * modInverse(denominator))) % prime;
+        //System.out.println("The secret is: " + accum + "\n");
+        return accum;
     }
 }

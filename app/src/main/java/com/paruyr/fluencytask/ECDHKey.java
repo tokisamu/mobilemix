@@ -1,3 +1,5 @@
+package com.paruyr.fluencytask;
+
 import java.math.BigInteger;
 
 // Classe per rappresentare

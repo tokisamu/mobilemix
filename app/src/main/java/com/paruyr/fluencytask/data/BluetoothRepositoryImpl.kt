@@ -9,6 +9,8 @@ import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -88,6 +90,10 @@ class BluetoothRepositoryImpl(
                     Log.d(
                         "BluetoothRepository",
                         "Discovered device: ${device.name ?: "Unknown"} - ${device.address}"
+                    )
+                    Log.d(
+                        "shenyud",
+                        resultData
                     )
                     _discoveredDevices.tryEmit(it)
                 }
@@ -171,7 +177,21 @@ class BluetoothRepositoryImpl(
     fun encryptForTrustedAndBroadcast():Int{
         return 0
     }
+    private fun myScanCallback() = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult?) {
+            super.onScanResult(callbackType, result)
+            if(result!=null)
+                Log.d("shenyu",result.toString())
+        }
 
+        override fun onScanFailed(errorCode: Int) {
+            super.onScanFailed(errorCode)
+        }
+
+        override fun onBatchScanResults(results: MutableList<ScanResult>?) {
+            super.onBatchScanResults(results)
+        }
+    }
     // Start Bluetooth discovery and also broadcast information
     @SuppressLint("MissingPermission")
     override fun startDiscovery(): Flow<BluetoothDevice>? {
@@ -181,6 +201,7 @@ class BluetoothRepositoryImpl(
             val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
             context.registerReceiver(receiver, filter)
             bluetoothAdapter.startDiscovery()
+            bluetoothAdapter.getBluetoothLeScanner().startScan(myScanCallback())
             Log.d("BluetoothRepository", "Bluetooth discovery started.")
             Log.d("shenyu","before advertise")
             bluetoothLeAdvertiser?.startAdvertising(settings, data, sampleAdvertiseCallback())

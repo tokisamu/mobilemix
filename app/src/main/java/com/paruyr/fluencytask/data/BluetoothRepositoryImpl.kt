@@ -301,7 +301,7 @@ class BluetoothRepositoryImpl(
             //Log.d("shenyulog", E192.mul(B,n192.add(BigInteger.ONE)).toString())
             //Log.d("shenyulog", B.toString())
 
-            val key2 = ECC.ECDHPhase1(E192, B192, n192);
+            var key2 = ECC.ECDHPhase1(E192, B192, n192);
             val h = E.getH()?.toLong()?.let { BigInteger.valueOf(it) }
             val maxM: BigInteger = E.getP().getP().divide(h).subtract(BigInteger.ONE)
             var currentTime = Calendar.getInstance().time
@@ -381,8 +381,37 @@ class BluetoothRepositoryImpl(
             //Log.d("shenyusorder", prime.toString());
             // 2 - at least 2 secret parts are needed to view secret
             // 5 - there are 5 persons that get secret parts
-            val shares1: Array<SecretShare> = ECC.split(secret1, 3, 3, prime, random)
-
+            var shares1: Array<SecretShare> = ECC.split(secret1, 3, 3, prime, random)
+            key2 = ECC.ECDHPhase1(E192, B192, n192);
+            var secret2 = key2.privateKey
+            var shares2: Array<SecretShare> = ECC.split(secret2, 3, 3, prime, random)
+            var key3 = ECC.ECDHPhase1(E192, B192, n192);
+            var secret3 = key3.privateKey
+            var shares3: Array<SecretShare> = ECC.split(secret3, 3, 3, prime, random)
+            shares1[0].share = shares1[0].share.add(shares2[0].share).add(shares3[0].share)
+            shares1[1].share = shares1[1].share.add(shares2[1].share).add(shares3[1].share)
+            shares1[2].share = shares1[2].share.add(shares2[2].share).add(shares3[2].share)
+            var tempri = ECC.combine(shares1,prime)
+            Log.d("what is the result","tanoshimi");
+            Log.d("shenyup", tempri.mod(prime).toString());
+            Log.d("shenyup", secret1.add(secret2).add(secret3).mod(prime).toString());
+            var sumPublicKey = E.sum(E.sum(key.publicKey,key2.publicKey),key3.publicKey)
+            Log.d("shenyup1", sumPublicKey.toString());
+            Log.d("shenyup1", E.mul(B,secret1.add(secret2).add(secret3).mod(prime)).toString());
+            var part1 = ECC.getPartpri(shares1[0], prime,0,3)
+            var part2 = ECC.getPartpri(shares1[1], prime,1,3)
+            var part3 = ECC.getPartpri(shares1[2], prime,2,3)
+            val m = ECC.randomBigInteger().mod(maxM)
+            var encoded: Array<Point> = ECC.ElGamalEnc(E, m, B, sumPublicKey)
+            var plaintext = ECC.ElGamalDec(E, B, encoded, part1.add(part2).add(part3).mod(prime))
+            Log.d("shenyup1", plaintext.toString());
+            Log.d("shenyup1", m.toString());
+            //Log.d("shenyupha", ECC.ElGamalTwoDec(E, B, encoded, part1,part2).toString());
+            encoded = ECC.ElPartDec(E, B, encoded, part1)
+            encoded = ECC.ElPartDec(E, B, encoded, part2)
+            plaintext = ECC.ElGamalDec(E, B, encoded, part3)
+            Log.d("shenyup", plaintext.toString());
+            Log.d("shenyup", m.toString());
             // we can use any combination of 2 or more parts of secret
             // 0 & 1
             /*

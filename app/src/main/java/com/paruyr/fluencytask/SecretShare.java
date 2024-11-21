@@ -25,6 +25,6 @@ public class SecretShare
         return "SecretShare [num=" + number + ", share=" + share + "]";
     }
 
-    private final int number;
-    private final BigInteger share;
+    public int number;
+    public BigInteger share;
 }

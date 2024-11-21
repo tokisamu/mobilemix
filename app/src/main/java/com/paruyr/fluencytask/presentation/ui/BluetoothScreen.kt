@@ -40,6 +40,7 @@ fun BluetoothScreen(
     viewModel: BluetoothViewModel = koinViewModel(),
     modifier: Modifier = Modifier,
 ) {
+
     val messages = viewModel.messages
     var messageInput by remember { mutableStateOf("") }
     val needsPermissions by viewModel.needsPermissions.collectAsState()
@@ -119,6 +120,24 @@ fun BluetoothScreen(
                 // Button to stop discovery
                 Button(onClick = { viewModel.stopDiscovery() }) {
                     Text("Stop Scan")
+                }
+
+            }
+
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+
+                // Button to create group 1
+                Button(onClick = { viewModel.createGroup() }) {
+                    Text("Create Group")
+                }
+
+                // Button to join group 1
+                Button(onClick = { viewModel.joinGroup() }) {
+                    Text("Join Group")
                 }
             }
 

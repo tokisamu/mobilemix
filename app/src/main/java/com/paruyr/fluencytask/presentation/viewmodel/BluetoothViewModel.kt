@@ -5,12 +5,16 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothServerSocket
+import android.bluetooth.BluetoothSocket
+import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -18,17 +22,21 @@ import com.paruyr.fluencytask.ECC
 import com.paruyr.fluencytask.ElGamel
 import com.paruyr.fluencytask.SecretShare
 import com.paruyr.fluencytask.FinitePrimeField
+import com.paruyr.fluencytask.MainActivity
 import com.paruyr.fluencytask.Point
 import com.paruyr.fluencytask.PrimeCurve
 import com.paruyr.fluencytask.data.BluetoothRepository
 import com.paruyr.fluencytask.domain.model.FluencyMessage
 import com.paruyr.fluencytask.domain.usecase.SendMessageUseCase
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.math.BigInteger
 import java.security.SecureRandom
+import java.util.ArrayList
 import java.util.Calendar
+import java.util.UUID
 
 
 class BluetoothViewModel(
@@ -48,7 +56,6 @@ class BluetoothViewModel(
 
     private val _discoveredDevices = mutableStateListOf<BluetoothDevice>()
     val discoveredDevices: List<BluetoothDevice> get() = _discoveredDevices
-
     init {
         // Handle permissions and start listening for connections when granted
         checkBluetoothPermissions()
@@ -72,6 +79,7 @@ class BluetoothViewModel(
     }
 
     private fun handleDisconnection() {
+        checkBluetoothPermissions()
         _isConnected.value = false
         bluetoothRepository.resetConnection()
         Log.e("BluetoothViewModel", "Device disconnected. Please reconnect.")
@@ -79,6 +87,7 @@ class BluetoothViewModel(
     }
 
     fun makeDeviceDiscoverable(context: Context, durationInSeconds: Int = 300) {
+        checkBluetoothPermissions()
         if (bluetoothAdapter?.isEnabled == true) {
             val discoverableIntent = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
                 putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, durationInSeconds)
@@ -98,21 +107,15 @@ class BluetoothViewModel(
     }
 
     private fun checkBluetoothPermissions() {
-        val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val requiredPermissions =
             listOf(
                 Manifest.permission.BLUETOOTH_SCAN,
                 Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.BLUETOOTH,
                 Manifest.permission.BLUETOOTH_ADMIN,
                 Manifest.permission.ACCESS_FINE_LOCATION // Needed for discovery
             )
-        } else {
-            listOf(
-                Manifest.permission.BLUETOOTH,
-                Manifest.permission.BLUETOOTH_ADMIN,
-                Manifest.permission.ACCESS_FINE_LOCATION // Needed for discovery
-            )
-        }
 
         val context: Context = getApplication<Application>().applicationContext
         val allGranted = requiredPermissions.all {
@@ -121,7 +124,7 @@ class BluetoothViewModel(
                 it
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         }
-
+        //ActivityCompat.requestPermissions(MainActivity(), arrayOf(Manifest.permission.BLUETOOTH_ADVERTISE), 1);
         _needsPermissions.value = !allGranted // If not all permissions are granted, request them
     }
 
@@ -134,6 +137,7 @@ class BluetoothViewModel(
     // Start Bluetooth discovery and collect devices
     @SuppressLint("MissingPermission")
     fun startBluetoothDiscovery() {
+        checkBluetoothPermissions()
         _discoveredDevices.clear() // Clear previous discovered devices
 
         viewModelScope.launch {
@@ -175,6 +179,14 @@ class BluetoothViewModel(
     fun stopDiscovery() {
         bluetoothRepository.stopDiscovery()
         Log.d("BluetoothViewModel", "Bluetooth discovery stopped.")
+    }
+
+    fun createGroup() {
+        bluetoothRepository.createGroup();
+    }
+
+    fun joinGroup() {
+        bluetoothRepository.joinGroup(1);
     }
 
     // Connect to a selected Bluetooth device

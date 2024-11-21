@@ -15,8 +15,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
+import androidx.annotation.RequiresApi
 import com.paruyr.fluencytask.ECC
 import com.paruyr.fluencytask.ElGamel
 import com.paruyr.fluencytask.FinitePrimeField
@@ -38,6 +40,7 @@ import java.security.SecureRandom
 import java.util.Calendar
 import java.util.UUID
 
+
 interface BluetoothRepository {
     suspend fun sendMessage(message: FluencyMessage)
     fun observeMessages(): Flow<FluencyMessage>
@@ -48,14 +51,17 @@ interface BluetoothRepository {
     fun isConnected(): Boolean
     fun observeDisconnection(): Flow<Boolean>
     fun resetConnection() // Add reset function
+    fun broadcastMessage(message: String) // Add reset function
+    fun createGroup()
+    fun joinGroup(groupID: Int)
 }
 
 // BluetoothRepositoryImpl: Implementation of the BluetoothRepository
 class BluetoothRepositoryImpl(
     private val context: Context,
 ) : BluetoothRepository {
-    private var bluetoothLeAdvertiser: BluetoothLeAdvertiser? = null
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
+    private var bluetoothLeAdvertiser: BluetoothLeAdvertiser? = bluetoothAdapter?.bluetoothLeAdvertiser
     private val _messages = MutableSharedFlow<FluencyMessage>()
     private val _discoveredDevices = MutableSharedFlow<BluetoothDevice>(replay = 1)
     private val _disconnectionHandler = MutableSharedFlow<Boolean>(replay = 1)
@@ -64,6 +70,14 @@ class BluetoothRepositoryImpl(
     private var isConnected = false
     private var myGroupPartPrivateKey: BigInteger? = null
     private var myGroupPublicKey: Point? = null
+    private var groupPublicKey: ArrayList<Point>? = null
+    private var groupID = arrayOf(0, 0, 0, 0, 0)
+    private var numMember = arrayOf(0, 0, 0, 0, 0)
+    private var myGroupID = 0;
+    private var myGroupNumMember = 1;
+    private var myGroupIndex = 1;
+    private var myGroupPrivateKey: ArrayList<BigInteger> ? = null
+
     val ElGamel =  ElGamel();
     //Log.d("shenyu", ElGamel.generator.toString());
     //val hahaPriKey = ElGamel.random;
@@ -91,10 +105,6 @@ class BluetoothRepositoryImpl(
                         "BluetoothRepository",
                         "Discovered device: ${device.name ?: "Unknown"} - ${device.address}"
                     )
-                    Log.d(
-                        "shenyud",
-                        resultData
-                    )
                     _discoveredDevices.tryEmit(it)
                 }
             }
@@ -113,6 +123,40 @@ class BluetoothRepositoryImpl(
                 }
             }
         }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun createGroup()
+    {
+        val CERTAINTY = 256
+        val key = k192;
+        val random = SecureRandom()
+        val secret = key.privateKey
+        // prime number must be longer then secret number
+        val prime =n192;
+        //Log.d("shenyusorder", prime.toString());
+        // 2 - at least 2 secret parts are needed to view secret
+        // 5 - there are 5 persons that get secret parts
+        val shares: Array<SecretShare> = ECC.split(secret, 3, 3, prime, random)
+        // we can use any combination of 2 or more parts of secret
+        var sharesToViewSecret: Array<SecretShare>? = arrayOf<SecretShare>(
+            shares[0],
+            shares[1],
+            shares[2],
+        ) // 0 & 1
+        var part1 = ECC.getPartpri(shares[0], prime,0,3)
+        var part2 = ECC.getPartpri(shares[1], prime,1,3)
+        var part3 = ECC.getPartpri(shares[2], prime,2,3)
+        Log.d("shenyusorder", key.privateKey.toString());
+        Log.d("shenyusorder", part1.add(part2).add(part3).toString());
+        //val maxM: BigInteger = E.getP().getP().divide(h).subtract(BigInteger.ONE)
+        //val m = ECC.randomBigInteger().mod(maxM)
+        if(myGroupID==0)
+            myGroupID = 1;
+        myGroupIndex = 0;
+        myGroupNumMember = 1;
+        numMember[myGroupID] = 1;
+        broadcastMessage(myGroupID.toString() +" "+myGroupIndex.toString()+" "+numMember[myGroupID].toString())
     }
 
     // Observe received messages
@@ -134,23 +178,13 @@ class BluetoothRepositoryImpl(
     //12: the key owner assign another group to forward this message
 
     //Step 1,2 multi party computation to be done
-    fun joinGroup(numMember: Int):String{
-        val CERTAINTY = 256
-        val random = SecureRandom()
-        val key = k192;
-        val secret = key.privateKey
-
-        val prime =n192;
-        val shares: Array<SecretShare> = ECC.split(secret, numMember-2, numMember, prime, random)
-        var sharesToViewSecret =  arrayOfNulls<SecretShare>(numMember-2);
-        //index 0 share is for the owner
-        myGroupPublicKey = key.publicKey;
-        myGroupPartPrivateKey = ECC.getPartpri(shares[0], prime,0,numMember-2)
-        for(i in 0..numMember)
-        {
-            //send all shares and the public keyto group in one message
-        }
-        return "0"
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun joinGroup(targetGroupID: Int){
+        myGroupID = targetGroupID;
+        myGroupIndex = numMember[myGroupID];
+        Log.d("shenyurr",myGroupID.toString()+" "+numMember[myGroupID].toString())
+        numMember[myGroupID]++;
+        broadcastMessage(myGroupID.toString() +" "+myGroupIndex.toString()+" "+numMember[myGroupID].toString())
     }
 
     //step 4,5,6 blind key to be done
@@ -178,8 +212,39 @@ class BluetoothRepositoryImpl(
         return 0
     }
     private fun myScanCallback() = object : ScanCallback() {
+        @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             super.onScanResult(callbackType, result)
+            if (result != null) {
+                val id = "00001101-0000-1000-8000-00805f9b34fb"
+                val tempResult = result.scanRecord?.serviceData.toString();
+                if(tempResult.length>37) {
+                    val resultID = tempResult.substring(1, 37)
+                    if (id == resultID)
+                    {
+                        var message: String;
+                        message = "";
+                        val chars = tempResult.substring(39, tempResult.length - 2).split(",")
+                        //Log.d("shenyur", chars.toString())
+                        for(i in 0..chars.size-1)
+                        {
+                            if(i==0)
+                                message += chars[i].substring(0,chars[i].length).toInt().toChar() ;
+                            else message += chars[i].substring(1,chars[i].length).toInt().toChar() ;
+                        }
+                        Log.d("shenyur", message)
+                        val receivedGroupID = message.substring(0,1).toInt();
+                        val receivedIndex = message.substring(2,3).toInt();
+                        val receivedGroupNum= message.substring(4,5).toInt();
+                        //Log.d("shenyur", receivedGroupNum.toString())
+                        //if(receivedGroupID==myGroupID)
+                        if (receivedGroupNum>numMember[receivedGroupID])
+                        {
+                            numMember[receivedGroupID] = receivedGroupNum;
+                        }
+                    }
+                }
+            }
             if(result!=null)
                 Log.d("shenyu",result.toString())
         }
@@ -201,10 +266,11 @@ class BluetoothRepositoryImpl(
             val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
             context.registerReceiver(receiver, filter)
             bluetoothAdapter.startDiscovery()
+
             bluetoothAdapter.getBluetoothLeScanner().startScan(myScanCallback())
             Log.d("BluetoothRepository", "Bluetooth discovery started.")
             Log.d("shenyu","before advertise")
-            bluetoothLeAdvertiser?.startAdvertising(settings, data, sampleAdvertiseCallback())
+            //bluetoothLeAdvertiser?.startAdvertising(settings, data, sampleAdvertiseCallback())
 
             //crypt test
             //protocol process:
@@ -221,15 +287,10 @@ class BluetoothRepositoryImpl(
             //12: for those 0 message, the key owner ask group re encrypt it with a specific key
             //13: the key owner assign another group to forward this message
             val ElGamel =  ElGamel();
+
             //Log.d("shenyu", ElGamel.generator.toString());
             //val hahaPriKey = ElGamel.random;
             //val hahaPubKey = ElGamel.getPuk(hahaPriKey);
-            val p192 = BigInteger("6277101735386680763835789423207666416083908700390324961279")
-            val z192 = FinitePrimeField(p192)
-            val b192 = BigInteger("64210519e59c80e70fa7e9ab72243049feb8deecc146b9b1", 16)
-            val E192 = PrimeCurve(z192, BigInteger.valueOf(-3), b192, 256)
-            val B192: Point = E192.getPoint(BigInteger("188DA80EB03090F67CBF20EB43A18800F4FF0AFD82FF1012", 16))
-            val n192 = BigInteger("6277101735386680763835789423176059013767194773182842284081")
             val k192 = ECC.ECDHPhase1(E192, B192, n192)
             val E = E192;
             val B = B192;
@@ -239,6 +300,7 @@ class BluetoothRepositoryImpl(
             //Log.d("shenyulog", E192.mul(B,b192).toString())
             //Log.d("shenyulog", E192.mul(B,n192.add(BigInteger.ONE)).toString())
             //Log.d("shenyulog", B.toString())
+
             val key2 = ECC.ECDHPhase1(E192, B192, n192);
             val h = E.getH()?.toLong()?.let { BigInteger.valueOf(it) }
             val maxM: BigInteger = E.getP().getP().divide(h).subtract(BigInteger.ONE)
@@ -247,7 +309,7 @@ class BluetoothRepositoryImpl(
             Log.d("shenyut", currentTime.toString());
             var plaintexts = ArrayList<BigInteger>();
 
-            for (i in 0..100) {
+            for (i in 0..0) {
                 // generate a random integer and encrypt
                 val m = ECC.randomBigInteger().mod(maxM)
                 plaintexts.add(m);
@@ -269,7 +331,7 @@ class BluetoothRepositoryImpl(
             ECC.ElGamalReencrypt(E,B,messages,key2.publicKey,key.privateKey)
             currentTime = Calendar.getInstance().time
             //Log.d("shenyut", currentTime.toString());
-            for (i in 0..100) {
+            for (i in 0..0) {
                 // generate a random integer and encrypt
                 val m = plaintexts[i];
                 var encoded = messages[i];
@@ -313,20 +375,17 @@ class BluetoothRepositoryImpl(
 
             val CERTAINTY = 256
             val random = SecureRandom()
-            val secret = key.privateKey
+            val secret1 = key.privateKey
             // prime number must be longer then secret number
             val prime =n192;
             //Log.d("shenyusorder", prime.toString());
             // 2 - at least 2 secret parts are needed to view secret
             // 5 - there are 5 persons that get secret parts
-            val shares: Array<SecretShare> = ECC.split(secret, 4, 5, prime, random)
+            val shares1: Array<SecretShare> = ECC.split(secret1, 3, 3, prime, random)
+
             // we can use any combination of 2 or more parts of secret
-            var sharesToViewSecret: Array<SecretShare>? = arrayOf<SecretShare>(
-                shares[0],
-                shares[1],
-                shares[2],
-                shares[3]
-            ) // 0 & 1
+            // 0 & 1
+            /*
             var part1 = ECC.getPartpri(shares[0], prime,0,4)
             var part2 = ECC.getPartpri(shares[1], prime,1,4)
             var part3 = ECC.getPartpri(shares[2], prime,2,4)
@@ -334,7 +393,6 @@ class BluetoothRepositoryImpl(
             var num = part1.add(part2).add(part3).add(part4).divide(prime);
             Log.d("shenyusorder", key.privateKey.toString());
             Log.d("shenyusorder", part1.add(part2).add(part3).add(part4).toString());
-            part1.subtract(prime.multiply(num))
             val m = ECC.randomBigInteger().mod(maxM)
             var encoded: Array<Point> = ECC.ElGamalEnc(E, m, B, key.getPublicKey())
             Log.d("shenyup", ECC.ElGamalDec(E, B, encoded, key.getPrivateKey()).toString());
@@ -346,6 +404,8 @@ class BluetoothRepositoryImpl(
             Log.d("shenyup", plaintext.toString());
             Log.d("shenyup", m.toString());
 
+             */
+
             return _discoveredDevices.asSharedFlow()
         } else {
             Log.e("BluetoothRepository", "Bluetooth is not enabled.")
@@ -353,25 +413,45 @@ class BluetoothRepositoryImpl(
         }
     };
 
+    @RequiresApi(Build.VERSION_CODES.O)
+    @SuppressLint("MissingPermission")
+    override fun broadcastMessage(message:String) {
+        if (bluetoothAdapter?.isEnabled == true) {
+            val settings: AdvertiseSettings = buildAdvertiseSettings()
+            val data: AdvertiseData = buildAdvertiseData(message)
+            val maxDataLength: Int = bluetoothAdapter.getLeMaximumAdvertisingDataLength()
+            Log.d("shenyulen",maxDataLength.toString())
+            bluetoothLeAdvertiser?.stopAdvertising(sampleAdvertiseCallback());
+            bluetoothLeAdvertiser?.startAdvertising(settings, data, sampleAdvertiseCallback())
+        }else {
+            Log.e("BluetoothRepository", "Bluetooth is not enabled.")
+        }
+    }
+
     private fun buildAdvertiseData(broadcastMess:String): AdvertiseData {
+        val rid  = MY_UUID
+        Log.d("MYID", rid.toString())
+        var mymess = "daodiyouga"
+        Log.d("MYMessage", broadcastMess.toByteArray().toString())
         return AdvertiseData.Builder()
-            .addServiceUuid(ParcelUuid(UUID.randomUUID())).setIncludeDeviceName(true).addManufacturerData(1, broadcastMess.toByteArray()).build();
+            .addServiceData(ParcelUuid(rid),broadcastMess.toByteArray()).setIncludeDeviceName(true).build();
     }
     private fun buildAdvertiseSettings() = AdvertiseSettings.Builder()
-        .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)
+        .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+        .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
         .setTimeout(0).build()
 
     private fun sampleAdvertiseCallback() = object : AdvertiseCallback() {
         override fun onStartFailure(errorCode: Int) {
             super.onStartFailure(errorCode)
-            //Log.d(TAG, "Advertising failed")
+            Log.d("shenyuf", "Advertising failed "+errorCode.toString())
             //broadcastFailureIntent(errorCode)
             //stopSelf()
         }
 
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
             super.onStartSuccess(settingsInEffect)
-            //Log.d(TAG, "Advertising successfully started")
+            Log.d("shenyus", "Advertising successfully started")
         }
     }
 

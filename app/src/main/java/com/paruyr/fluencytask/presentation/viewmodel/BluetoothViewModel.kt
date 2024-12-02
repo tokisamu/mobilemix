@@ -182,11 +182,24 @@ class BluetoothViewModel(
     }
 
     fun createGroup() {
+        checkBluetoothPermissions()
         bluetoothRepository.createGroup();
+        viewModelScope.launch {
+            startListeningForConnections()
+        }
     }
 
+    @SuppressLint("MissingPermission")
     fun joinGroup() {
+        checkBluetoothPermissions()
         bluetoothRepository.joinGroup(1);
+        viewModelScope.launch {
+            bluetoothRepository.getParentDevice()?.let { connectToDevice(it) }
+            Log.d(
+                "BluetoothViewModel",
+                "Attempting to connect to device: ${bluetoothRepository.getParentDevice()?.name ?: bluetoothRepository.getParentDevice()?.address}"
+            )
+        }
     }
 
     // Connect to a selected Bluetooth device

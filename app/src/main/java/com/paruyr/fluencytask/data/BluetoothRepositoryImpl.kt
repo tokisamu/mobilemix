@@ -39,6 +39,7 @@ import java.math.BigInteger
 import java.security.SecureRandom
 import java.util.Calendar
 import java.util.UUID
+import kotlin.math.max
 
 
 interface BluetoothRepository {
@@ -54,6 +55,7 @@ interface BluetoothRepository {
     fun broadcastMessage(message: String) // Add reset function
     fun createGroup()
     fun joinGroup(groupID: Int)
+    fun getParentDevice():BluetoothDevice?
 }
 
 // BluetoothRepositoryImpl: Implementation of the BluetoothRepository
@@ -67,16 +69,38 @@ class BluetoothRepositoryImpl(
     private val _disconnectionHandler = MutableSharedFlow<Boolean>(replay = 1)
     private var bluetoothSocket: BluetoothSocket? = null
     private var serverSocket: BluetoothServerSocket? = null
+    var current_index = 1;
+    var current_stage = -1;
+    var current_group_index =1;
+    var current_message_cnt = 1;
+    var messageString = "";
+    var messageString2 = "";
     private var isConnected = false
     private var myGroupPartPrivateKey: BigInteger? = null
+    private var myPartPublicKet: Point? = null
+    private var testPrivateKey = BigInteger("0")
+    private var groupPrivateKey: ArrayList<BigInteger>  = ArrayList<BigInteger>()
+    private var myShares:Array<SecretShare>? = null
+    private var mySecret: BigInteger? = null
     private var myGroupPublicKey: Point? = null
     private var groupPublicKey: ArrayList<Point>? = null
+    private var collectedPublicKey: ArrayList<Point>? = ArrayList<Point>()
+    private var collectedShares: ArrayList<Array<BigInteger>> = ArrayList<Array<BigInteger>>()
     private var groupID = arrayOf(0, 0, 0, 0, 0)
+    private var setUpStage = 0;
+    private var myGroupNum = 1;
+    private var roundCnt = 0;
     private var numMember = arrayOf(0, 0, 0, 0, 0)
-    private var myGroupID = 0;
+    private var groupOrder = arrayOf(0, 1, 2, 3, 4)
+    private var storedDevices: ArrayList<BluetoothDevice>? = null
+    private var myGroupID = 1
+    private var parentDevice: BluetoothDevice? = null
+    override fun getParentDevice(): BluetoothDevice? {
+        return parentDevice;
+    }
     private var myGroupNumMember = 1;
     private var myGroupIndex = 1;
-    private var myGroupPrivateKey: ArrayList<BigInteger> ? = null
+    private var myGroupPrivateKey: ArrayList<BigInteger>  = ArrayList<BigInteger>()
 
     val ElGamel =  ElGamel();
     //Log.d("shenyu", ElGamel.generator.toString());
@@ -90,9 +114,11 @@ class BluetoothRepositoryImpl(
     val n192 = BigInteger("6277101735386680763835789423176059013767194773182842284081")
     val k192 = ECC.ECDHPhase1(E192, B192, n192)
     val E = E192;
+    val prime = n192;
     val B = B192;
+    val h = E.getH()?.toLong()?.let { BigInteger.valueOf(it) }
     private val MY_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-
+    val maxM: BigInteger = E.getP().getP().divide(h).subtract(BigInteger.ONE)
     private val receiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
         override fun onReceive(context: Context, intent: Intent) {
@@ -115,9 +141,141 @@ class BluetoothRepositoryImpl(
         bluetoothSocket?.let { socket ->
             withContext(Dispatchers.IO) {
                 try {
-                    val outputStream: OutputStream = socket.outputStream
-                    outputStream.write(message.content.toByteArray())
-                    Log.d("BluetoothRepository", "Sent message: ${message.content}")
+                    if (myShares == null) {
+                        val CERTAINTY = 256
+                        val random = SecureRandom()
+                        var newKey = ECC.ECDHPhase1(E192, B192, n192);
+                        collectedPublicKey?.add(newKey.publicKey)
+                        myPartPublicKet = newKey.publicKey
+                        var newSecret = newKey.privateKey
+                        //broadcast generated publicKey
+                        //newKey.publicKey
+                        val prime = n192;
+                        var newShares: Array<SecretShare> =
+                            ECC.split(newSecret, 2, 3, prime, random)
+                        myShares = newShares
+                        mySecret = newKey.privateKey
+                        newShares[myGroupIndex] //this is for this user
+                        var sendToArray =
+                            Array<BigInteger>(0) { BigInteger(myGroupIndex.toString()) }
+                        for (i in 1..3)
+                            sendToArray += newShares[i - 1].share
+                        if (collectedShares.size<10)
+                        {
+                            for (i in 0..9)
+                                collectedShares.add(arrayOf(BigInteger((i+1).toString())))
+                        }
+                        sendToArray += BigInteger(myGroupIndex.toString())
+                        collectedShares.set(myGroupIndex,sendToArray)
+                        Log.d("shenyuexception",collectedShares[0].contentToString())
+                        Log.d("shenyuexception",collectedShares[1].contentToString())
+                        val outputStream: OutputStream = socket.outputStream
+                        Log.d("shenyumessage", newShares.toString())
+                        //should encrypt for each user but simplified here
+                        outputStream.write(("1"+sendToArray.contentToString()).toByteArray())
+                        Log.d("BluetoothRepository", "Sent message: ${message.content}")
+                        setUpStage = 1;
+                    } else if (setUpStage ==1){
+                        val outputStream: OutputStream = socket.outputStream
+                        outputStream.write(("2"+myGroupIndex.toString()+myPartPublicKet.toString()).toByteArray())
+                        Log.d("BluetoothRepository", "Sent message: ${message.content}")
+                        setUpStage = 2;
+                    }
+                    else if (setUpStage ==2){
+                        val outputStream: OutputStream = socket.outputStream
+                        outputStream.write(("3"+myGroupIndex.toString()).toByteArray())
+                        Log.d("BluetoothRepository", "Sent message: ${message.content}")
+                        setUpStage = 4;
+                    }
+                    else if (setUpStage == 3) //generate new message
+                    {
+                        val m = ECC.randomBigInteger().mod(maxM)
+                        Log.d("shenyumessage",m.toString())
+                        Log.d("shenyupp1", m.toString());
+                        var encoded: Array<Point> = ECC.ElGamalEnc(E, m, B, myGroupPublicKey)
+                        val outputStream: OutputStream = socket.outputStream
+                        //encoded = ECC.ElPartDec(E, B, encoded, myGroupPrivateKey?.get(myGroupID))
+                        outputStream.write(("4"+encoded.contentToString()).toByteArray())
+                        setUpStage = 4;
+                    }
+                    else if (setUpStage == 4) //generate 100 message to shuffle
+                    {
+                        var messageToSend = "";
+                        val outputStream: OutputStream = socket.outputStream
+                        var messages: ArrayList<BigInteger> = ArrayList<BigInteger>();
+                        for (i in 0..99) {
+                            val m = ECC.randomBigInteger().mod(maxM)
+                            messages.add(m)
+                            var encoded: Array<Point> = ECC.ElGamalEnc(E, m, B, myGroupPublicKey)
+                            //encoded = ECC.ElPartDec(E, B, encoded, myGroupPrivateKey?.get(myGroupID))
+                            var indexSend = ""
+                            if(i<10)
+                                indexSend+=" "
+                            indexSend+=i.toString()
+                            messageToSend = messageToSend +encoded.contentToString()
+                            if(i==0)
+                                outputStream.write(("4" + "0"+myGroupIndex.toString()+indexSend+encoded.contentToString()).toByteArray())
+                            else
+                                outputStream.write((encoded.contentToString()).toByteArray())
+                            //outputStream.flush()
+                        }
+                        messageToSend = ""
+                        outputStream.write("!".toByteArray())
+                        Log.d("shuffleMessage",messageToSend)
+                        for (i in 0..99) {
+                            val m = messages[i]
+                            var encoded: Array<Point> = ECC.ElGamalInverseEnc(E, m, B, myGroupPublicKey,maxM)
+                            //encoded = ECC.ElPartDec(E, B, encoded, myGroupPrivateKey?.get(myGroupID))
+                            var indexSend = ""
+                            if(i<10)
+                                indexSend+=" "
+                            indexSend+=i.toString()
+                            messageToSend = messageToSend +encoded.contentToString()
+                            if(i==0)
+                                outputStream.write(("4" + "0"+myGroupIndex.toString()+indexSend+encoded.contentToString()).toByteArray())
+                            else
+                                outputStream.write((encoded.contentToString()).toByteArray())
+                            //outputStream.flush()
+                        }
+                        outputStream.write("!".toByteArray())
+                        Log.d("shuffleMessage",messageToSend)
+                        setUpStage = 5
+                        for(i in 0..99)
+                            _messages.emit(FluencyMessage(messages[i].toString()+" "+E.h.toString(),false))
+                    }
+                    else if (setUpStage == 5) //send 100 messages to decrypt
+                    {
+                        var messageToSend = "";
+                        val outputStream: OutputStream = socket.outputStream
+                        for (i in 0..99) {
+                            val m = ECC.randomBigInteger().mod(maxM)
+                            var encoded: Array<Point> = ECC.ElGamalEnc(E, m, B, myGroupPublicKey)
+                            //encoded = ECC.ElPartDec(E, B, encoded, myGroupPrivateKey?.get(myGroupID))
+                            var indexSend = ""
+                            if(i<10)
+                                indexSend+=" "
+                            indexSend+=i.toString()
+                            messageToSend = messageToSend +encoded.contentToString()
+                            if(i==0)
+                                outputStream.write(("5" + "0"+myGroupIndex.toString()+indexSend+encoded.contentToString()).toByteArray())
+                            else
+                                outputStream.write((encoded.contentToString()).toByteArray())
+                            //outputStream.flush()
+                        }
+                        outputStream.write("!".toByteArray())
+                        Log.d("shuffleMessage",messageToSend)
+                        setUpStage = 5
+                    }
+                    else if (setUpStage == 6) //re-encrypt message
+                    {
+
+                    }
+                    else
+                    {
+                        val outputStream: OutputStream = socket.outputStream
+                        outputStream.write(("9"+message.content).toByteArray())
+                        Log.d("BluetoothRepository", "Sent message: ${message.content}")
+                    }
                 } catch (e: Exception) {
                     Log.e("BluetoothRepository", "Failed to send message: ${e.message}")
                 }
@@ -125,32 +283,13 @@ class BluetoothRepositoryImpl(
         }
     }
 
+
+
+
+
     @RequiresApi(Build.VERSION_CODES.O)
     override fun createGroup()
     {
-        val CERTAINTY = 256
-        val key = k192;
-        val random = SecureRandom()
-        val secret = key.privateKey
-        // prime number must be longer then secret number
-        val prime =n192;
-        //Log.d("shenyusorder", prime.toString());
-        // 2 - at least 2 secret parts are needed to view secret
-        // 5 - there are 5 persons that get secret parts
-        val shares: Array<SecretShare> = ECC.split(secret, 3, 3, prime, random)
-        // we can use any combination of 2 or more parts of secret
-        var sharesToViewSecret: Array<SecretShare>? = arrayOf<SecretShare>(
-            shares[0],
-            shares[1],
-            shares[2],
-        ) // 0 & 1
-        var part1 = ECC.getPartpri(shares[0], prime,0,3)
-        var part2 = ECC.getPartpri(shares[1], prime,1,3)
-        var part3 = ECC.getPartpri(shares[2], prime,2,3)
-        Log.d("shenyusorder", key.privateKey.toString());
-        Log.d("shenyusorder", part1.add(part2).add(part3).toString());
-        //val maxM: BigInteger = E.getP().getP().divide(h).subtract(BigInteger.ONE)
-        //val m = ECC.randomBigInteger().mod(maxM)
         if(myGroupID==0)
             myGroupID = 1;
         myGroupIndex = 0;
@@ -159,6 +298,61 @@ class BluetoothRepositoryImpl(
         broadcastMessage(myGroupID.toString() +" "+myGroupIndex.toString()+" "+numMember[myGroupID].toString())
     }
 
+    //after there are enough users
+    fun initializationOfGroupStage1()
+    {
+        val CERTAINTY = 256
+        val random = SecureRandom()
+        var newKey = ECC.ECDHPhase1(E192, B192, n192);
+        var newSecret = newKey.privateKey
+        //broadcast generated publicKey
+        newKey.publicKey
+        val prime =n192;
+        var newShares: Array<SecretShare> = ECC.split(newSecret, 3, 3, prime, random)
+        newShares+=SecretShare(myGroupIndex, BigInteger(myGroupIndex.toString()))
+        newShares[myGroupIndex] //this is for this user
+        for (i in 0..numMember[myGroupID])
+        {
+            if(i==myGroupIndex)
+                continue;
+
+            //send newShares[i] to the ith user
+        }
+    }
+
+    //after information from other users are collected
+    fun initializationOfGroupStage2()
+    {
+        val CERTAINTY = 256
+        // prime number must be longer then secret number
+        val prime =n192;
+        var temPublicKey = E.sum(collectedPublicKey?.get(0) , collectedPublicKey?.get(1));
+        for (i in 2..numMember[myGroupID])
+            temPublicKey = E.sum(temPublicKey,collectedPublicKey?.get(i))
+        myGroupPublicKey = temPublicKey;
+        /*
+        shares1[0].share = shares1[0].share.add(shares2[0].share).add(shares3[0].share)
+        shares1[1].share = shares1[1].share.add(shares2[1].share).add(shares3[1].share)
+        shares1[2].share = shares1[2].share.add(shares2[2].share).add(shares3[2].share)
+        var sumPublicKey = E.sum(E.sum(key.publicKey,key2.publicKey),key3.publicKey)
+        Log.d("shenyup1", sumPublicKey.toString());
+        Log.d("shenyup1", E.mul(B,secret1.add(secret2).add(secret3).mod(prime)).toString());
+        var part1 = ECC.getPartpri(shares1[0], prime,0,3)
+        var part2 = ECC.getPartpri(shares1[1], prime,1,3)
+        var part3 = ECC.getPartpri(shares1[2], prime,2,3)
+        val m = ECC.randomBigInteger().mod(maxM)
+        var encoded: Array<Point> = ECC.ElGamalEnc(E, m, B, sumPublicKey)
+        var plaintext = ECC.ElGamalDec(E, B, encoded, part1.add(part2).add(part3).mod(prime))
+        Log.d("shenyup1", plaintext.toString());
+        Log.d("shenyup1", m.toString());
+        //Log.d("shenyupha", ECC.ElGamalTwoDec(E, B, encoded, part1,part2).toString());
+        encoded = ECC.ElPartDec(E, B, encoded, part1)
+        encoded = ECC.ElPartDec(E, B, encoded, part2)
+        plaintext = ECC.ElGamalDec(E, B, encoded, part3)
+        Log.d("shenyup", plaintext.toString());
+        Log.d("shenyup", m.toString());
+        */
+    }
     // Observe received messages
     override fun observeMessages(): Flow<FluencyMessage> = _messages.asSharedFlow()
 
@@ -184,6 +378,7 @@ class BluetoothRepositoryImpl(
         myGroupIndex = numMember[myGroupID];
         Log.d("shenyurr",myGroupID.toString()+" "+numMember[myGroupID].toString())
         numMember[myGroupID]++;
+        myGroupNum = max(myGroupNum,numMember[myGroupID])
         broadcastMessage(myGroupID.toString() +" "+myGroupIndex.toString()+" "+numMember[myGroupID].toString())
     }
 
@@ -211,6 +406,8 @@ class BluetoothRepositoryImpl(
     fun encryptForTrustedAndBroadcast():Int{
         return 0
     }
+
+    @SuppressLint("MissingPermission")
     private fun myScanCallback() = object : ScanCallback() {
         @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
@@ -238,6 +435,14 @@ class BluetoothRepositoryImpl(
                         val receivedGroupNum= message.substring(4,5).toInt();
                         //Log.d("shenyur", receivedGroupNum.toString())
                         //if(receivedGroupID==myGroupID)
+                        //just to test need modification later
+                        storedDevices?.add(result.device)
+                        parentDevice = result.device;
+                        if (receivedGroupID ==myGroupID)
+                        {
+                            parentDevice = result.device;
+                            Log.d("shenyudevice",result.device.name)
+                        }
                         if (receivedGroupNum>numMember[receivedGroupID])
                         {
                             numMember[receivedGroupID] = receivedGroupNum;
@@ -258,15 +463,13 @@ class BluetoothRepositoryImpl(
         }
     }
     // Start Bluetooth discovery and also broadcast information
+
     @SuppressLint("MissingPermission")
     override fun startDiscovery(): Flow<BluetoothDevice>? {
         if (bluetoothAdapter?.isEnabled == true) {
-            val settings: AdvertiseSettings = buildAdvertiseSettings()
-            val data: AdvertiseData = buildAdvertiseData("broadcast1")
             val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
             context.registerReceiver(receiver, filter)
             bluetoothAdapter.startDiscovery()
-
             bluetoothAdapter.getBluetoothLeScanner().startScan(myScanCallback())
             Log.d("BluetoothRepository", "Bluetooth discovery started.")
             Log.d("shenyu","before advertise")
@@ -302,8 +505,6 @@ class BluetoothRepositoryImpl(
             //Log.d("shenyulog", B.toString())
 
             var key2 = ECC.ECDHPhase1(E192, B192, n192);
-            val h = E.getH()?.toLong()?.let { BigInteger.valueOf(it) }
-            val maxM: BigInteger = E.getP().getP().divide(h).subtract(BigInteger.ONE)
             var currentTime = Calendar.getInstance().time
             var messages = ArrayList<Array<Point>>();
             Log.d("shenyut", currentTime.toString());
@@ -381,13 +582,13 @@ class BluetoothRepositoryImpl(
             //Log.d("shenyusorder", prime.toString());
             // 2 - at least 2 secret parts are needed to view secret
             // 5 - there are 5 persons that get secret parts
-            var shares1: Array<SecretShare> = ECC.split(secret1, 3, 3, prime, random)
+            var shares1: Array<SecretShare> = ECC.split(secret1, 2, 3, prime, random)
             key2 = ECC.ECDHPhase1(E192, B192, n192);
             var secret2 = key2.privateKey
-            var shares2: Array<SecretShare> = ECC.split(secret2, 3, 3, prime, random)
+            var shares2: Array<SecretShare> = ECC.split(secret2, 2, 3, prime, random)
             var key3 = ECC.ECDHPhase1(E192, B192, n192);
             var secret3 = key3.privateKey
-            var shares3: Array<SecretShare> = ECC.split(secret3, 3, 3, prime, random)
+            var shares3: Array<SecretShare> = ECC.split(secret3, 2, 3, prime, random)
             shares1[0].share = shares1[0].share.add(shares2[0].share).add(shares3[0].share)
             shares1[1].share = shares1[1].share.add(shares2[1].share).add(shares3[1].share)
             shares1[2].share = shares1[2].share.add(shares2[2].share).add(shares3[2].share)
@@ -398,8 +599,8 @@ class BluetoothRepositoryImpl(
             var sumPublicKey = E.sum(E.sum(key.publicKey,key2.publicKey),key3.publicKey)
             Log.d("shenyup1", sumPublicKey.toString());
             Log.d("shenyup1", E.mul(B,secret1.add(secret2).add(secret3).mod(prime)).toString());
-            var part1 = ECC.getPartpri(shares1[0], prime,0,3)
-            var part2 = ECC.getPartpri(shares1[1], prime,1,3)
+            var part1 = ECC.getPartpri(shares1[0], prime,0,2)
+            var part2 = ECC.getPartpri(shares1[1], prime,1,2)
             var part3 = ECC.getPartpri(shares1[2], prime,2,3)
             val m = ECC.randomBigInteger().mod(maxM)
             var encoded: Array<Point> = ECC.ElGamalEnc(E, m, B, sumPublicKey)
@@ -408,8 +609,8 @@ class BluetoothRepositoryImpl(
             Log.d("shenyup1", m.toString());
             //Log.d("shenyupha", ECC.ElGamalTwoDec(E, B, encoded, part1,part2).toString());
             encoded = ECC.ElPartDec(E, B, encoded, part1)
-            encoded = ECC.ElPartDec(E, B, encoded, part2)
-            plaintext = ECC.ElGamalDec(E, B, encoded, part3)
+            //encoded = ECC.ElPartDec(E, B, encoded, part2)
+            plaintext = ECC.ElGamalDec(E, B, encoded, part2)
             Log.d("shenyup", plaintext.toString());
             Log.d("shenyup", m.toString());
             // we can use any combination of 2 or more parts of secret
@@ -441,6 +642,24 @@ class BluetoothRepositoryImpl(
             return null
         }
     };
+
+
+
+    /*
+    @SuppressLint("MissingPermission")
+    override fun startDiscovery(): Flow<BluetoothDevice>? {
+        if (bluetoothAdapter?.isEnabled == true) {
+            val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
+            context.registerReceiver(receiver, filter)
+            bluetoothAdapter.startDiscovery()
+            Log.d("BluetoothRepository", "Bluetooth discovery started.")
+            return _discoveredDevices.asSharedFlow()
+        } else {
+            Log.e("BluetoothRepository", "Bluetooth is not enabled.")
+            return null
+        }
+    }
+    */
 
     @RequiresApi(Build.VERSION_CODES.O)
     @SuppressLint("MissingPermission")
@@ -499,6 +718,8 @@ class BluetoothRepositoryImpl(
     override suspend fun connectToDevice(device: BluetoothDevice): Boolean {
         return withContext(Dispatchers.IO) {
             try {
+
+                bluetoothLeAdvertiser?.stopAdvertising(sampleAdvertiseCallback())
                 bluetoothSocket?.close()
                 bluetoothSocket = device.createRfcommSocketToServiceRecord(MY_UUID)
                 bluetoothAdapter?.cancelDiscovery()
@@ -550,23 +771,195 @@ class BluetoothRepositoryImpl(
     // Check if the device is connected
     override fun isConnected(): Boolean = isConnected
 
+    fun stringToBigIntegerArray(input: String): Array<BigInteger> {
+        var temp = input.substring(2,input.length-1)
+        // Split the string by a delimiter (e.g., space or comma) and convert to BigInteger
+        return temp.split(",")  // Change the delimiter as needed (e.g., "," or " ")
+            .map { BigInteger(it.trim()) }  // Convert each part to BigInteger
+            .toTypedArray()  // Convert the list to an array
+    }
+
     // Start listening for incoming messages
     private fun startListeningForMessages(socket: BluetoothSocket) {
         val inputStream: InputStream = socket.inputStream
+        if (collectedShares.size<10)
+        {
+            for (i in 0..9) {
+                collectedShares.add(arrayOf(BigInteger((i + 1).toString())))
+                myGroupPrivateKey?.add(BigInteger((i).toString()))
+                groupPrivateKey?.add(BigInteger((i).toString()))
+            }
+        }
         GlobalScope.launch(Dispatchers.IO) {
             try {
                 val buffer = ByteArray(1024)
                 while (true) {
                     val bytes = inputStream.read(buffer)
                     if (bytes > 0) {
-                        val incomingMessage = String(buffer, 0, bytes).trim()
+                        var incomingMessage = String(buffer, 0, bytes).trim()
                         if (incomingMessage.isNotBlank()) {
-                            _messages.emit(FluencyMessage(incomingMessage, false))
-                            Log.d("BluetoothRepository", "Received message: $incomingMessage")
+                            if (incomingMessage[0]=='1'&&current_stage==-1) {
+                                var incomingArray = stringToBigIntegerArray(incomingMessage)
+                                var arrayIndex = incomingArray[incomingArray.size - 1].toInt();
+                                myGroupNum = max(myGroupNum,arrayIndex+1)
+                                collectedShares.set(arrayIndex, incomingArray)
+                                _messages.emit(FluencyMessage(collectedShares[arrayIndex].contentToString(), false))
+                                Log.d(
+                                    "BluetoothRepository",
+                                    "Received message:" + collectedShares[arrayIndex].contentToString()
+                                )
+                            }
+                            else if(incomingMessage[0]=='2'&&current_stage==-1)
+                            {
+                                var receivedIndex = incomingMessage[1].toString().toInt()
+                                _messages.emit(FluencyMessage(receivedIndex.toString(), false))
+                                incomingMessage = incomingMessage.substring(2,incomingMessage.length)
+                                var parts = incomingMessage.split(',','=')
+                                var receivedPublicKey = Point(BigInteger(parts[1]), BigInteger(parts[3]),0)
+                                collectedPublicKey?.add(receivedPublicKey)
+                                _messages.emit(FluencyMessage(parts[1].toString()+ parts[3].toString(), false))
+                                _messages.emit(FluencyMessage("partPublicKey: "+incomingMessage, false))
+                            }
+                            else if(incomingMessage[0]=='3'&&current_stage==-1)
+                            {
+                                myGroupPublicKey = E.sum(collectedPublicKey?.get(0),collectedPublicKey?.get(1))
+                                //_messages.emit(FluencyMessage("groupKey: "+myGroupPublicKey.toString(), false))
+                                var keySize = collectedPublicKey?.size ?: 0
+                                for (i in 2..keySize-1)
+                                {
+                                    myGroupPublicKey = E.sum(myGroupPublicKey,collectedPublicKey?.get(i))
+                                }
+                                var sumGroupPrivateKey = BigInteger("0");
+                                //_messages.emit(FluencyMessage("share 0 0 : "+collectedShares[0][0].toString(), false))
+                                //_messages.emit(FluencyMessage("share 0 1 : "+collectedShares[0][1].toString(), false))
+                                //_messages.emit(FluencyMessage("share 1 0 : "+collectedShares[1][0].toString(), false))
+                                //_messages.emit(FluencyMessage("share 0 1 : "+collectedShares[1][1].toString(), false))
+                                for(i in 0..myGroupNum-1)
+                                {
+                                    var tempShre =  collectedShares[0][i]+collectedShares[1][i]
+                                    for(j in 2..myGroupNum-1)
+                                    {
+                                        tempShre+=collectedShares[j][i]
+                                    }
+                                    tempShre = tempShre.mod(prime)
+                                    groupPrivateKey[i] = ECC.getPartpri(SecretShare(i,tempShre), prime,i,2);
+                                    _messages.emit(FluencyMessage("pri  : "+i.toString()+" "+ECC.getPartpri(SecretShare(i,tempShre), prime,i,2).toString(), false))
+                                    sumGroupPrivateKey = sumGroupPrivateKey.add(ECC.getPartpri(SecretShare(i,tempShre), prime,i,2)).mod(prime)
+                                }
+                                _messages.emit(FluencyMessage("groupKey: "+myGroupPublicKey.toString(), false))
+                                _messages.emit(FluencyMessage("prikey: "+sumGroupPrivateKey.toString(), false))
+                                val m = ECC.randomBigInteger().mod(maxM)
+                                var encoded: Array<Point> = ECC.ElGamalEnc(E, m, B, myGroupPublicKey)
+                                var plaintext = ECC.ElGamalDec(E, B, encoded, groupPrivateKey[0].add(groupPrivateKey[1]).mod(prime))
+                                var plaintext2 = ECC.ElGamalDec(E, B, encoded, sumGroupPrivateKey)
+                                testPrivateKey = sumGroupPrivateKey
+                                _messages.emit(FluencyMessage("plaintext2 : "+m.toString(), false) )
+                                _messages.emit(FluencyMessage("plaintext1 : "+plaintext.toString(), false) )
+                                _messages.emit(FluencyMessage("plaintext3 : "+plaintext2.toString(), false) )
+                                //Log.d("shenyupha", ECC.ElGamalTwoDec(E, B, encoded, part1,part2).toString());
+                                //encoded = ECC.ElPartDec(E, B, encoded, part1)
+                                //encoded = ECC.ElPartDec(E, B, encoded, part2)
+                                //plaintext = ECC.ElGamalDec(E, B, encoded, part2)
+                                var newShare = collectedShares[0][myGroupIndex]+collectedShares[1][myGroupIndex]
+                                for(i in 2..myGroupNum-1)
+                                {
+                                    newShare+=collectedShares[i][myGroupIndex]
+                                }
+                                var part1 = ECC.getPartpri(SecretShare(myGroupIndex,newShare), prime,myGroupIndex,2)
+                                myGroupPrivateKey?.set(myGroupID,part1)
+                                _messages.emit(FluencyMessage("my part key is : "+part1.toString(), false))
+                            }
+                            else if(incomingMessage[0]=='4'&&current_stage==-1)
+                            {
+                                current_stage = 4;
+                                Log.d("received plaintext",incomingMessage)
+                                if(roundCnt==0)
+                                    messageString+=incomingMessage
+                                else
+                                    messageString2+=incomingMessage
+                            }
+                            else if(current_stage==4)
+                            {
+                                if(roundCnt==0)
+                                    messageString+=incomingMessage
+                                else
+                                    messageString2+=incomingMessage
+                                //_messages.emit(FluencyMessage("11111"+messageString, false))
+                                //_messages.emit(FluencyMessage("22222"+messageString2, false))
+                                if(incomingMessage.contains("!", ignoreCase = true))
+                                {
+                                    current_stage = -1
+                                    if(roundCnt==1)
+                                    {
+                                        var parts = messageString.split(',','=')
+                                        var parts2 = messageString2.split(',','=')
+                                        var messages = ArrayList<Array<Point>>();
+                                        Log.d("parts2",parts2[1])
+                                        for(i in 0..99)
+                                        {
+                                            var receivedCipher1 = Point(BigInteger(parts[1+11*i]), BigInteger(parts[3+11*i]), 0)
+                                            var receivedCipher2 = Point(BigInteger(parts[7+11*i]), BigInteger(parts[9+11*i]), 0)
+                                            var receivedCipher3 = Point(BigInteger(parts2[1+11*i]), BigInteger(parts2[3+11*i]), 0)
+                                            var receivedCipher4 = Point(BigInteger(parts2[7+11*i]), BigInteger(parts2[9+11*i]), 0)
+                                            var pl1 = ECC.ElGamalDec(E,B, arrayOf(E.sum(receivedCipher1,receivedCipher3),E.sum(receivedCipher2,receivedCipher4)),testPrivateKey)
+                                            var pl2 = ECC.ElGamalDec(E,B, arrayOf(receivedCipher3,receivedCipher4),testPrivateKey)
+                                            //E.mul(receivedCipher1,receivedCipher3)
+                                            //_messages.emit(FluencyMessage(pl1.multiply(pl2).mod(prime).toString(), false))
+                                            _messages.emit(FluencyMessage(pl1.toString(), false))
+                                            messages.add(arrayOf(receivedCipher1,receivedCipher2))
+                                        }
+                                        //messages = ECC.ElGamalShuffle(E,B,messages,myGroupPublicKey)
+                                        //_messages.emit(FluencyMessage(messages[0].contentToString(), false))
+                                        messageString = ""
+                                        messageString2 = ""
+                                    }
+                                    roundCnt = 1-roundCnt;
+                                }
+                            }
+                            else if(incomingMessage[0]=='5'&&current_stage==-1)
+                            {
+                                current_stage = 5;
+                                Log.d("received plaintext",incomingMessage)
+                            }
+                            else if(current_stage==5)
+                            {
+                                messageString+=incomingMessage
+                                if(incomingMessage.contains("!", ignoreCase = true))
+                                {
+                                    current_stage = -1
+                                    var parts = messageString.split(',','=')
+                                    var messages = ArrayList<Array<Point>>();
+                                    for(i in 0..99)
+                                    {
+                                        var receivedCipher1 = Point(BigInteger(parts[1+11*i]), BigInteger(parts[3+11*i]), 0)
+                                        var receivedCipher2 = Point(BigInteger(parts[7+11*i]), BigInteger(parts[9+11*i]), 0)
+                                        messages.add(arrayOf(receivedCipher1,receivedCipher2))
+                                        val partPlain = ECC.ElGamalDec(E,B, arrayOf(receivedCipher1,receivedCipher2),myGroupPrivateKey.get(myGroupID))
+                                        _messages.emit(FluencyMessage(partPlain.toString(), false))
+                                    }
+                                    roundCnt = 1-roundCnt;
+                                }
+                            }
+                            else if(incomingMessage[0]=='6'&&current_stage==-1)
+                            {
+                                incomingMessage = incomingMessage.substring(1,incomingMessage.length)
+                                _messages.emit(FluencyMessage(incomingMessage, false))
+                            }
+                            else if(incomingMessage[0]=='7'&&current_stage==-1)
+                            {
+                                incomingMessage = incomingMessage.substring(1,incomingMessage.length)
+                                _messages.emit(FluencyMessage(incomingMessage, false))
+                            }
+                            else if(incomingMessage[0]=='9'&&current_stage==-1)
+                            {
+                                incomingMessage = incomingMessage.substring(1,incomingMessage.length)
+                                _messages.emit(FluencyMessage(incomingMessage, false))
+                            }
                         }
                     }
                 }
             } catch (e: Exception) {
+                Log.d("shenyuexception",e.toString())
                 Log.e("BluetoothRepository", "Connection lost: ${e.message}")
                 isConnected = false
                 _disconnectionHandler.tryEmit(true) // Notify disconnection

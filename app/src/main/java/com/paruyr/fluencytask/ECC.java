@@ -21,12 +21,27 @@ public class ECC {
         return Point.INVALID;
     }
 
+    public static Point KoblitzInverseEnc(PrimeCurve P, BigInteger m,BigInteger maxM) {
+        Integer h = P.getH();
+        BigInteger x = m.multiply(BigInteger.valueOf(h)); // Calcolo x = m*h
+        for (int i = 0; i < h; i++) {
+            // Calcolo il punto ad ascissa x, se è valido lo restituisco
+            Point p = P.getPoint(x);
+            if (p.isValid()) return P.pointInverse(p);
+            // Altrimenti incremento x e ripeto
+            x = x.add(BigInteger.ONE);
+        }
+        // Se non ho trovato nessun punto, ne restituisco uno invalido
+        return Point.INVALID;
+    }
+
     // Decodifica di Koblitz del punto p sulla curva prima P
     public static BigInteger KoblitzDec(PrimeCurve P, Point p) {
         Integer h = P.getH();
         BigInteger x = p.getX().divide(BigInteger.valueOf(h));
         return x;
     }
+
 
 
     public static Point[] ElGamalEnc(PrimeCurve P, BigInteger m, Point B, Point Pd) {
@@ -38,6 +53,16 @@ public class ECC {
         return new Point[]{V, W};
     }
 
+    public static Point[] ElGamalInverseEnc(PrimeCurve P, BigInteger m, Point B, Point Pd,BigInteger maxM) {
+        Point pm = ECC.KoblitzInverseEnc(P, m,maxM);
+        BigInteger r = ECC.randomBigInteger();
+        Point V = P.mul(B, r);
+        Point rPd = P.mul(Pd, r);
+        Point W = P.sum(pm, rPd);
+        return new Point[]{V, W};
+    }
+
+
     // Decodifica del messaggio (V, W) sulla curva prima P
     public static BigInteger ElGamalDec(PrimeCurve P, Point B, Point[] VW, BigInteger nD) {
         Point V = VW[0];
@@ -48,16 +73,6 @@ public class ECC {
         return m;
     }
 
-    public static BigInteger ElGamalTwoDec(PrimeCurve P, Point B, Point[] VW, BigInteger nD1,BigInteger nD2) {
-        Point V = VW[0];
-        Point W = VW[1];
-        Point nDV = P.mul(V, nD1);
-        Point Pm = P.sub(W, nDV);
-        Point nDV2 = P.mul(V, nD2);
-        Pm = P.sub(Pm, nDV2);
-        BigInteger m = ECC.KoblitzDec(P, Pm);
-        return m;
-    }
 
     public static Point[] ElPartDec(PrimeCurve P, Point B, Point[] VW, BigInteger nD) {
         Point V = VW[0];
